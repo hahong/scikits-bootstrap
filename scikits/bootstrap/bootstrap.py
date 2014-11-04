@@ -10,7 +10,8 @@ class InstabilityWarning(UserWarning):
 # On import, make sure that InstabilityWarnings are not filtered out.
 warnings.simplefilter('always',InstabilityWarning)
 
-def ci(data, statfunction=np.average, alpha=0.05, n_samples=10000, method='bca', output='lowhigh', epsilon=0.001, multi=None, derivatives=False, statfunction_full=None):
+def ci(data, statfunction=np.average, alpha=0.05, n_samples=10000, method='bca', output='lowhigh', epsilon=0.001, multi=None,
+       derivatives=False, statfunction_full=None, der_correct=True):
     """
 Given a set of data ``data``, and a statistics function ``statfunction`` that
 applies to that data, computes the bootstrap confidence interval for
@@ -158,8 +159,8 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
             # There MUST be a better way to do this!
             for i in range(0,nn):
                 di = I[i] - p0
-                tp = statfunction(*tdata,weights=p0+ep*di)
-                tm = statfunction(*tdata,weights=p0-ep*di)
+                tp = statfunction(*tdata,weights=(1 - ep)*p0+ep*di)
+                tm = statfunction(*tdata,weights=(1 - ep)*p0-ep*di)
                 t1[i] = (tp-tm)/(2*ep)
                 t2[i] = (tp-2*t0+tm)/ep**2
         else:
@@ -168,8 +169,8 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
             t1a = np.zeros(nn); t2a = np.zeros(nn)
             for i in range(0,nn):
                 di = I[i] - p0
-                tp = statfunction(*tdata,weights=p0+ep*di)
-                tm = statfunction(*tdata,weights=p0-ep*di)
+                tp = statfunction(*tdata,weights=(1 - ep)*p0+ep*di)
+                tm = statfunction(*tdata,weights=(1 - ep)*p0-ep*di)
                 t1a[i] = (tp-tm)/(2*ep)
                 t2a[i] = (tp-2*t0+tm)/ep**2
             print t1 - t1a
@@ -182,10 +183,10 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
         a = (np.sum(t1**3))/(6*n**3*sighat**3)
         delta = t1/(n**2*sighat)
         if not derivatives:
-            cq = (statfunction(*tdata,weights=p0+ep*delta)-2*t0+statfunction(*tdata,weights=p0-ep*delta))/(2*sighat*ep**2)
+            cq = (statfunction(*tdata,weights=(1 - ep)*p0+ep*delta)-2*t0+statfunction(*tdata,weights=(1 - ep)*p0-ep*delta))/(2*sighat*ep**2)
         else:
             cq = 0.5 * np.dot(gg0, ((delta - p0) ** 2 + (delta + p0) ** 2))
-            cqa = (statfunction(*tdata,weights=p0+ep*delta)-2*t0+statfunction(*tdata,weights=p0-ep*delta))/(2*sighat*ep**2)
+            cqa = (statfunction(*tdata,weights=(1 - ep)*p0+ep*delta)-2*t0+statfunction(*tdata,weights=(1 - ep)*p0-ep*delta))/(2*sighat*ep**2)
 
             print cq - cqa
             print np.abs(cq - cqa).max()
