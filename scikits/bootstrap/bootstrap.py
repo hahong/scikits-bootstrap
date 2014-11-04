@@ -58,9 +58,8 @@ multi: boolean, optional
 derivatives: boolean, optional
     This has effect only for ABC CI computations.  If False, no derivatives
     will be used (default).  If True, either:
-      - `statfunction` must return the statistic and along with the first
-        derivatives (gradient) and 2nd order derivatives (the main diagonal of
-        the Hessian) of weights.
+      - `statfunction` must return the statistic and along with the gradient
+        and the Hessian matrix wrt weights.
       or
       - `statfunction_full` is defined and returns the three values (statistic,
         1st and 2nd derivatives) mentioned above.  In this case, `statfunction`
@@ -151,7 +150,7 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
                   statfunction = lambda *args, **kwargs: statfunction_full(*args, **kwargs)[0]
               if type(t0) is not tuple or len(t0) != 3:
                   raise TypeError('statfunction does not return correct derivatives')
-              t0, g0, gg0 = t0   # function value, first, and 2nd derivates at p0
+              t0, g0, h0 = t0   # function value, gradient, and the Hessian matrix
         except TypeError as e:
           raise TypeError("statfunction does not accept correct arguments for ABC ({0})".format(e.message))
 
@@ -164,8 +163,11 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
                 t1[i] = (tp-tm)/(2*ep)
                 t2[i] = (tp-2*t0+tm)/ep**2
         else:
-            t1 = g0  # np.dot(g0, (1. - p0))
-            t2 = 0.5 * np.dot(gg0, ((1. - p0) ** 2 + (1. + p0) ** 2))
+            t1 = np.dot(g0, I - np.tile(p0, (nn, 1)).T)
+            t2 = np.empty(nn)
+            for i in xrange(nn):
+                U = np.outer(I[i] - p0, I[i] - p0) + np.outer(I[i] + p0, I[i] + p0)
+                t2[i] = 0.5 * np.sum(h0 * U)
 
         sighat = np.sqrt(np.sum(t1**2))/n
         a = (np.sum(t1**3))/(6*n**3*sighat**3)
@@ -173,7 +175,9 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
         if not derivatives:
             cq = (statfunction(*tdata,weights=(1 - ep)*p0+ep*delta)-2*t0+statfunction(*tdata,weights=(1 - ep)*p0-ep*delta))/(2*sighat*ep**2)
         else:
-            cq = 0.5 * np.dot(gg0, ((delta - p0) ** 2 + (delta + p0) ** 2))
+            U = np.outer(delta - p0, delta - p0) + np.outer(delta + p0, delta + p0)
+            cq = 0.5 * np.sum(h0 * U)
+
         bhat = np.sum(t2)/(2*n**2)
         curv = bhat/sighat-cq
         z0 = norm.ppf(2*norm.cdf(a)*norm.cdf(-curv))
