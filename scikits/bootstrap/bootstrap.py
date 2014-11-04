@@ -10,7 +10,7 @@ class InstabilityWarning(UserWarning):
 # On import, make sure that InstabilityWarnings are not filtered out.
 warnings.simplefilter('always',InstabilityWarning)
 
-def ci(data, statfunction=np.average, alpha=0.05, n_samples=10000, method='bca', output='lowhigh', epsilon=0.001, multi=None):
+def ci(data, statfunction=np.average, alpha=0.05, n_samples=10000, method='bca', output='lowhigh', epsilon=0.001, multi=None, derivatives=False, statfunction_full=None):
     """
 Given a set of data ``data``, and a statistics function ``statfunction`` that
 applies to that data, computes the bootstrap confidence interval for
@@ -54,6 +54,19 @@ multi: boolean, optional
     If False, assume data is a single array. If True, assume data is a tuple/other
     iterable of arrays of the same length that should be sampled together. If None,
     decide based on whether the data is an actual tuple. (default=None)
+derivatives: boolean, optional
+    This has effect only for ABC CI computations.  If False, no derivatives
+    will be used (default).  If True, either:
+      - `statfunction` must return the statistic and along with the first
+        derivatives (gradient) and 2nd order derivatives (the main diagonal of
+        the Hessian) of weights.
+      or
+      - `statfunction_full` is defined and returns the three values (statistic,
+        1st and 2nd derivatives) mentioned above.  In this case, `statfunction`
+        must return only the statistic (i.e., the original definition).
+statfunction_full: function, optional
+    Only used for ABC CI computation with `derivatives` turned on.  See above
+    description for derivatives for details.
     
 Returns
 -------
@@ -127,21 +140,39 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
         t1 = np.zeros(nn); t2 = np.zeros(nn)
         try:
           t0 = statfunction(*tdata,weights=p0)
+          if derivatives:
+              if statfunction_full is not None:
+                  t0 = statfunction_full(*tdata,weights=p0)
+              else:
+                  # since we've got all the derivatives needed, transform statfunction into the standard form
+                  # and save the passed one as statfunction_full
+                  statfunction_full = statfunction
+                  statfunction = lambda *args, **kwargs: statfunction_full(*args, **kwargs)[0]
+              if type(t0) is not tuple or len(t0) != 3:
+                  raise TypeError('statfunction does not return correct derivatives')
+              t0, g0, gg0 = t0   # function value, first, and 2nd derivates at p0
         except TypeError as e:
           raise TypeError("statfunction does not accept correct arguments for ABC ({0})".format(e.message))
 
-        # There MUST be a better way to do this!
-        for i in range(0,nn):
-            di = I[i] - p0
-            tp = statfunction(*tdata,weights=p0+ep*di)
-            tm = statfunction(*tdata,weights=p0-ep*di)
-            t1[i] = (tp-tm)/(2*ep)
-            t2[i] = (tp-2*t0+tm)/ep**2
+        if not derivatives:
+            # There MUST be a better way to do this!
+            for i in range(0,nn):
+                di = I[i] - p0
+                tp = statfunction(*tdata,weights=p0+ep*di)
+                tm = statfunction(*tdata,weights=p0-ep*di)
+                t1[i] = (tp-tm)/(2*ep)
+                t2[i] = (tp-2*t0+tm)/ep**2
+        else:
+            t1 = np.dot(g0, (1. - p0))
+            t2 = 0.5 * np.dot(gg0, ((1. - p0) ** 2 + (1. + p0) ** 2))
 
         sighat = np.sqrt(np.sum(t1**2))/n
         a = (np.sum(t1**3))/(6*n**3*sighat**3)
         delta = t1/(n**2*sighat)
-        cq = (statfunction(*tdata,weights=p0+ep*delta)-2*t0+statfunction(*tdata,weights=p0-ep*delta))/(2*sighat*ep**2)
+        if not derivatives:
+            cq = (statfunction(*tdata,weights=p0+ep*delta)-2*t0+statfunction(*tdata,weights=p0-ep*delta))/(2*sighat*ep**2)
+        else:
+            cq = 0.5 * np.dot(gg0, ((delta - p0) ** 2 + (delta + p0) ** 2))
         bhat = np.sum(t2)/(2*n**2)
         curv = bhat/sighat-cq
         z0 = norm.ppf(2*norm.cdf(a)*norm.cdf(-curv))
