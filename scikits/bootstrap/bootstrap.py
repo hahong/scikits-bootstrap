@@ -163,8 +163,20 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
                 t1[i] = (tp-tm)/(2*ep)
                 t2[i] = (tp-2*t0+tm)/ep**2
         else:
-            t1 = np.dot(g0, (1. - p0))
+            t1 = g0  # np.dot(g0, (1. - p0))
             t2 = 0.5 * np.dot(gg0, ((1. - p0) ** 2 + (1. + p0) ** 2))
+            t1a = np.zeros(nn); t2a = np.zeros(nn)
+            for i in range(0,nn):
+                di = I[i] - p0
+                tp = statfunction(*tdata,weights=p0+ep*di)
+                tm = statfunction(*tdata,weights=p0-ep*di)
+                t1a[i] = (tp-tm)/(2*ep)
+                t2a[i] = (tp-2*t0+tm)/ep**2
+            print t1 - t1a
+            print t2 - t2a
+        
+            print np.abs(t1 - t1a).max()
+            print np.abs(t2 - t2a).max()
 
         sighat = np.sqrt(np.sum(t1**2))/n
         a = (np.sum(t1**3))/(6*n**3*sighat**3)
@@ -173,6 +185,10 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
             cq = (statfunction(*tdata,weights=p0+ep*delta)-2*t0+statfunction(*tdata,weights=p0-ep*delta))/(2*sighat*ep**2)
         else:
             cq = 0.5 * np.dot(gg0, ((delta - p0) ** 2 + (delta + p0) ** 2))
+            cqa = (statfunction(*tdata,weights=p0+ep*delta)-2*t0+statfunction(*tdata,weights=p0-ep*delta))/(2*sighat*ep**2)
+
+            print cq - cqa
+            print np.abs(cq - cqa).max()
         bhat = np.sum(t2)/(2*n**2)
         curv = bhat/sighat-cq
         z0 = norm.ppf(2*norm.cdf(a)*norm.cdf(-curv))
