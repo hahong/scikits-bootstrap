@@ -149,12 +149,19 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
         try:
             t0 = statfunction(*tdata, weights=p0)
             derivatives = False
-            if statfunction_full is not None:
+            if statfunction_full is not None and sf_type is not None:
                 derivatives = True
                 if sf_type == 'g':
                     g0 = statfunction_full(*tdata, weights=p0)
                     g = lambda x, v: np.dot(
                         statfunction_full(*tdata, weights=p0 + x * v), v)
+                    h0 = None
+                elif sf_type == 'g_hv':
+                    g0 = statfunction_full(*tdata, weights=p0,
+                        v=np.zeros(nn), evalonly=0)
+                    hv = lambda w, v: np.dot(
+                        statfunction_full(*tdata, weights=w, v=v,
+                                          evalonly=1), v)
                     h0 = None
                 elif sf_type == 'fgh':
                     # gradient, and the Hessian
@@ -175,12 +182,14 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
             t1 = np.dot(g0, I - np.tile(p0, (nn, 1)).T)
             for i in range(nn):
                 if sf_type == 'fgh':
-                    U = np.outer(I[i] - p0, I[i] - p0) + \
-                        np.outer(I[i] + p0, I[i] + p0)
-                    t2[i] = 0.5 * np.sum(h0 * U)
+                    U = np.outer(I[i] - p0, I[i] - p0)
+                    t2[i] = np.sum(h0 * U)
                 elif sf_type == 'g':
                     di = I[i] - p0
                     t2[i] = derivative(g, 0, ep, n=1, order=5, args=(di,))
+                elif sf_type == 'g_hv':
+                    di = I[i] - p0
+                    t2[i] = hv(p0, di)
 
             #### DEBUG CODE ####
             if _debug:
@@ -221,6 +230,8 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
             elif sf_type == 'g':
                 cq = derivative(g, 0, ep, n=1, order=5, args=(delta,)) \
                     / (2. * sighat)
+            elif sf_type == 'g_hv':
+                cq = hv(p0, delta) / (2. * sighat)
 
             #### DEBUG CODE ####
             if _debug:
