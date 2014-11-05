@@ -1,5 +1,6 @@
 from numpy.random import randint
 from scipy.stats import norm
+from scipy.misc import derivative
 import numpy as np
 import warnings
 
@@ -14,7 +15,9 @@ warnings.simplefilter('always', InstabilityWarning)
 
 def ci(data, statfunction=np.average, alpha=0.05, n_samples=10000,
        method='bca', output='lowhigh', epsilon=0.001, multi=None,
-       derivatives=False, statfunction_full=None):
+       derivatives=False, statfunction_full=None,
+       statfunction_gradonly=None,
+       _debug=False):
     """
 Given a set of data ``data``, and a statistics function ``statfunction`` that
 applies to that data, computes the bootstrap confidence interval for
@@ -147,19 +150,27 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
         try:
             t0 = statfunction(*tdata, weights=p0)
             if derivatives:
-                if statfunction_full is not None:
-                    t0 = statfunction_full(*tdata, weights=p0)
+                if statfunction_gradonly is not None:
+                    g0 = statfunction_gradonly(*tdata, weights=p0)
+                    assert type(g0) is not tuple
+                    g = lambda x, v: np.dot(
+                        statfunction_gradonly(*tdata, weights=p0 + x * v), v)
+                    h0 = None
                 else:
-                    # since we've got all the derivatives needed, transform
-                    # statfunction into the standard form and save the passed
-                    # one as statfunction_full
-                    statfunction_full = statfunction
-                    statfunction = lambda *args, **kwargs: \
-                        statfunction_full(*args, **kwargs)[0]
-                if type(t0) is not tuple or len(t0) != 3:
-                    raise TypeError('statfunction does not return '
-                                    'correct derivatives')
-                t0, g0, h0 = t0   # function value, gradient, and the Hessian
+                    if statfunction_full is not None:
+                        t0 = statfunction_full(*tdata, weights=p0)
+                    else:
+                        # since we've got all the derivatives needed, transform
+                        # statfunction into the standard form and save the
+                        # passed one as statfunction_full
+                        statfunction_full = statfunction
+                        statfunction = lambda *args, **kwargs: \
+                            statfunction_full(*args, **kwargs)[0]
+                    if type(t0) is not tuple or len(t0) != 3:
+                        raise TypeError('statfunction does not return '
+                                        'correct derivatives')
+                    # function value, gradient, and the Hessian
+                    t0, g0, h0 = t0
         except TypeError as e:
             raise TypeError("statfunction does not accept correct "
                             "arguments for ABC ({0})".format(e.message))
@@ -168,32 +179,100 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
             # There MUST be a better way to do this!
             for i in range(nn):
                 di = I[i] - p0
-                tp = statfunction(*tdata, weights=(1 - ep) * p0 + ep * di)
-                tm = statfunction(*tdata, weights=(1 - ep) * p0 - ep * di)
+                tp = statfunction(*tdata, weights=p0 + ep * di)
+                tm = statfunction(*tdata, weights=p0 - ep * di)
                 t1[i] = (tp - tm) / (2 * ep)
                 t2[i] = (tp - 2 * t0 + tm) / ep ** 2
         else:
             t1 = np.dot(g0, I - np.tile(p0, (nn, 1)).T)
-            t2 = np.empty(nn)
             for i in range(nn):
-                U = np.outer(I[i] - p0, I[i] - p0) + \
-                    np.outer(I[i] + p0, I[i] + p0)
-                t2[i] = 0.5 * np.sum(h0 * U)
+                if not statfunction_gradonly:
+                    U = np.outer(I[i] - p0, I[i] - p0) + \
+                        np.outer(I[i] + p0, I[i] + p0)
+                    t2[i] = 0.5 * np.sum(h0 * U)
+                else:
+                    di = I[i] - p0
+                    t2[i] = derivative(g, 0, ep, n=1, order=5, args=(di,))
+
+            #### DEBUG CODE ####
+            if _debug:
+                t1a = np.zeros(nn)
+                t2a = np.zeros(nn)
+                t2b = np.zeros(nn)
+                t2b2 = np.zeros(nn)
+                for i in range(nn):
+                    di = I[i] - p0
+                    tp = statfunction(*tdata, weights=p0 + ep * di)
+                    tm = statfunction(*tdata, weights=p0 - ep * di)
+                    t1a[i] = (tp - tm) / (2 * ep)
+                    t2a[i] = (tp - 2 * t0 + tm) / ep ** 2
+                    t2b[i] = derivative(
+                        lambda x: statfunction(*tdata, weights=p0 + x * di),
+                        0, ep, n=2, order=3)
+                    t2b2[i] = derivative(
+                        lambda x: statfunction(*tdata, weights=p0 + x * di),
+                        0, ep, n=2, order=9)
+
+                print 't1 - t1a:'
+                print np.median(np.abs(t1 - t1a))
+                print np.max(np.abs(t1 - t1a))
+                print
+                print 't2 - t2a:'
+                print np.median(np.abs(t2 - t2a))
+                print np.max(np.abs(t2 - t2a))
+                print
+                print 't2 - t2b:'
+                print np.median(np.abs(t2 - t2b))
+                print np.max(np.abs(t2 - t2b))
+                print
+                print 't2b - t2a:'
+                print np.median(np.abs(t2b - t2a))
+                print np.max(np.abs(t2b - t2a))
+                print
+                print 't2b2 - t2b:'
+                print np.median(np.abs(t2b2 - t2b))
+                print np.max(np.abs(t2b2 - t2b))
+                print
+                print 't2 - t2b2:'
+                print np.median(np.abs(t2 - t2b2))
+                print np.max(np.abs(t2 - t2b2))
+                print
+            #### END DEBUG ####
 
         sighat = np.sqrt(np.sum(t1 ** 2)) / n
         a = (np.sum(t1 ** 3)) / (6 * n ** 3 * sighat ** 3)
         delta = t1 / (n ** 2 * sighat)
+        # cq computation is different from the book
         if not derivatives:
             cq = (statfunction(*tdata,
-                               weights=(1 - ep) * p0 + ep * delta) -
+                               weights=p0 + ep * delta) -
                   2 * t0 +
                   statfunction(*tdata,
-                               weights=(1 - ep) * p0 - ep * delta)) \
+                               weights=p0 - ep * delta)) \
                 / (2 * sighat * ep ** 2)
         else:
-            U = np.outer(delta - p0, delta - p0) + \
-                np.outer(delta + p0, delta + p0)
-            cq = 0.5 * np.sum(h0 * U)
+            if not statfunction_gradonly:
+                U = np.outer(delta, delta)
+                cq = np.sum(h0 * U) / (2. * sighat)
+            else:
+                cq = derivative(g, 0, ep, n=1, order=5, args=(delta,)) \
+                    / (2. * sighat)
+
+            #### DEBUG CODE ####
+            if _debug:
+                cqa = (statfunction(*tdata,
+                                   weights=p0 + ep * delta) -
+                      2 * t0 +
+                      statfunction(*tdata,
+                                   weights=p0 - ep * delta)) \
+                    / (2 * sighat * ep ** 2)
+                print 'cq - cqa:'
+                print cq - cqa
+                print
+                #cqb = np.diag(h0 * U).sum()
+                #print 'cqb - cqa:'
+                #print cqb - cqa
+            #### END DEBUG ####
 
         bhat = np.sum(t2) / (2 * n ** 2)
         curv = bhat / sighat - cq
@@ -205,7 +284,6 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
         for i in range(len(alphas)):
             abc[i] = statfunction(*tdata,
                                   weights=p0 + za[i] * delta)
-
         if output == 'lowhigh':
             return abc
         elif output == 'errorbar':
