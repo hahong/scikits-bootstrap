@@ -15,9 +15,7 @@ warnings.simplefilter('always', InstabilityWarning)
 
 def ci(data, statfunction=np.average, alpha=0.05, n_samples=10000,
        method='bca', output='lowhigh', epsilon=0.001, multi=None,
-       derivatives=False, statfunction_full=None,
-       statfunction_gradonly=None,
-       _debug=False):
+       statfunction_full=None, sf_type='fgh', _debug=False):
     """
 Given a set of data ``data``, and a statistics function ``statfunction`` that
 applies to that data, computes the bootstrap confidence interval for
@@ -63,18 +61,19 @@ multi: boolean, optional
     tuple/other iterable of arrays of the same length that should be sampled
     together. If None, decide based on whether the data is an actual tuple.
     (default=None)
-derivatives: boolean, optional
-    This has effect only for ABC CI computations.  If False, no derivatives
-    will be used (default).  If True, either:
-      - `statfunction` must return the statistic and along with the gradient
-        and the Hessian matrix wrt weights.
-      or
-      - `statfunction_full` is defined and returns the three values (statistic,
-        1st and 2nd derivatives) mentioned above.  In this case, `statfunction`
-        must return only the statistic (i.e., the original definition).
+sf_type: string, optimal
+    Only effective for ABC CI computations.  This sets the type of
+    `statfunction_full`.  See statfunction_full for details.
 statfunction_full: function, optional
-    Only used for ABC CI computation with `derivatives` turned on.  See above
-    description for derivatives for details.
+    This has effect only for ABC CI computations.  If None, no derivatives
+    will be used (default).  Otherwise, `sf_type` determines the type of
+    this function as follows.
+      - `sf_type` is 'fgh': `statfunction_full` must return the statistic and
+        along with the gradient and the Hessian matrix wrt weights.
+      - `sf_type` is 'g': `statfunction_full` only returns the
+        gradient
+      - `sf_type` is 'g_hv': `statfunction_full` returns the
+        gradient and Hessian x vector quantity.
 
 Returns
 -------
@@ -149,28 +148,17 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
         t2 = np.zeros(nn)
         try:
             t0 = statfunction(*tdata, weights=p0)
-            if derivatives:
-                if statfunction_gradonly is not None:
-                    g0 = statfunction_gradonly(*tdata, weights=p0)
-                    assert type(g0) is not tuple
+            derivatives = False
+            if statfunction_full is not None:
+                derivatives = True
+                if sf_type == 'g':
+                    g0 = statfunction_full(*tdata, weights=p0)
                     g = lambda x, v: np.dot(
-                        statfunction_gradonly(*tdata, weights=p0 + x * v), v)
+                        statfunction_full(*tdata, weights=p0 + x * v), v)
                     h0 = None
-                else:
-                    if statfunction_full is not None:
-                        t0 = statfunction_full(*tdata, weights=p0)
-                    else:
-                        # since we've got all the derivatives needed, transform
-                        # statfunction into the standard form and save the
-                        # passed one as statfunction_full
-                        statfunction_full = statfunction
-                        statfunction = lambda *args, **kwargs: \
-                            statfunction_full(*args, **kwargs)[0]
-                    if type(t0) is not tuple or len(t0) != 3:
-                        raise TypeError('statfunction does not return '
-                                        'correct derivatives')
-                    # function value, gradient, and the Hessian
-                    t0, g0, h0 = t0
+                elif sf_type == 'fgh':
+                    # gradient, and the Hessian
+                    _, g0, h0 = statfunction_full(*tdata, weights=p0)
         except TypeError as e:
             raise TypeError("statfunction does not accept correct "
                             "arguments for ABC ({0})".format(e.message))
@@ -186,11 +174,11 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
         else:
             t1 = np.dot(g0, I - np.tile(p0, (nn, 1)).T)
             for i in range(nn):
-                if not statfunction_gradonly:
+                if sf_type == 'fgh':
                     U = np.outer(I[i] - p0, I[i] - p0) + \
                         np.outer(I[i] + p0, I[i] + p0)
                     t2[i] = 0.5 * np.sum(h0 * U)
-                else:
+                elif sf_type == 'g':
                     di = I[i] - p0
                     t2[i] = derivative(g, 0, ep, n=1, order=5, args=(di,))
 
@@ -198,20 +186,12 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
             if _debug:
                 t1a = np.zeros(nn)
                 t2a = np.zeros(nn)
-                t2b = np.zeros(nn)
-                t2b2 = np.zeros(nn)
                 for i in range(nn):
                     di = I[i] - p0
                     tp = statfunction(*tdata, weights=p0 + ep * di)
                     tm = statfunction(*tdata, weights=p0 - ep * di)
                     t1a[i] = (tp - tm) / (2 * ep)
                     t2a[i] = (tp - 2 * t0 + tm) / ep ** 2
-                    t2b[i] = derivative(
-                        lambda x: statfunction(*tdata, weights=p0 + x * di),
-                        0, ep, n=2, order=3)
-                    t2b2[i] = derivative(
-                        lambda x: statfunction(*tdata, weights=p0 + x * di),
-                        0, ep, n=2, order=9)
 
                 print 't1 - t1a:'
                 print np.median(np.abs(t1 - t1a))
@@ -220,22 +200,6 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
                 print 't2 - t2a:'
                 print np.median(np.abs(t2 - t2a))
                 print np.max(np.abs(t2 - t2a))
-                print
-                print 't2 - t2b:'
-                print np.median(np.abs(t2 - t2b))
-                print np.max(np.abs(t2 - t2b))
-                print
-                print 't2b - t2a:'
-                print np.median(np.abs(t2b - t2a))
-                print np.max(np.abs(t2b - t2a))
-                print
-                print 't2b2 - t2b:'
-                print np.median(np.abs(t2b2 - t2b))
-                print np.max(np.abs(t2b2 - t2b))
-                print
-                print 't2 - t2b2:'
-                print np.median(np.abs(t2 - t2b2))
-                print np.max(np.abs(t2 - t2b2))
                 print
             #### END DEBUG ####
 
@@ -251,10 +215,10 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
                                weights=p0 - ep * delta)) \
                 / (2 * sighat * ep ** 2)
         else:
-            if not statfunction_gradonly:
+            if sf_type == 'fgh':
                 U = np.outer(delta, delta)
                 cq = np.sum(h0 * U) / (2. * sighat)
-            else:
+            elif sf_type == 'g':
                 cq = derivative(g, 0, ep, n=1, order=5, args=(delta,)) \
                     / (2. * sighat)
 
@@ -269,9 +233,6 @@ Efron, An Introduction to the Bootstrap. Chapman & Hall 1993
                 print 'cq - cqa:'
                 print cq - cqa
                 print
-                #cqb = np.diag(h0 * U).sum()
-                #print 'cqb - cqa:'
-                #print cqb - cqa
             #### END DEBUG ####
 
         bhat = np.sum(t2) / (2 * n ** 2)
